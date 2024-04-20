@@ -5,21 +5,51 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 
 // Generator генерирует последовательность чисел 1,2,3 и т.д. и
 // отправляет их в канал ch. При этом после записи в канал для каждого числа
 // вызывается функция fn. Она служит для подсчёта количества и суммы
 // сгенерированных чисел.
+var wg sync.WaitGroup
+var mux sync.Mutex
+
 func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 	// 1. Функция Generator
 	// ...
+	var n int64
+	n = 0
+	for {
+		select {
+		case <-ctx.Done():
+			close(ch)
+			return
+		case ch <- n:
+			mux.Lock()
+			fn(n)
+			mux.Unlock()
+			n += 1
+
+		}
+	}
+
 }
 
 // Worker читает число из канала in и пишет его в канал out.
 func Worker(in <-chan int64, out chan<- int64) {
 	// 2. Функция Worker
-	// ...
+	defer wg.Done()
+	for {
+		// получаем числа из канала
+		v, ok := <-in
+		if !ok {
+			close(out)
+			break
+		}
+		// отправляем результат в другой канал
+		out <- v
+	}
 }
 
 func main() {
@@ -27,7 +57,8 @@ func main() {
 
 	// 3. Создание контекста
 	// ...
-
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
 	// для проверки будем считать количество и сумму отправленных чисел
 	var inputSum int64   // сумма сгенерированных чисел
 	var inputCount int64 // количество сгенерированных чисел
@@ -38,11 +69,12 @@ func main() {
 		inputCount++
 	})
 
-	const NumOut = 5 // количество обрабатывающих горутин и каналов
+	const NumOut = 10 // количество обрабатывающих горутин и каналов
 	// outs — слайс каналов, куда будут записываться числа из chIn
 	outs := make([]chan int64, NumOut)
 	for i := 0; i < NumOut; i++ {
 		// создаём каналы и для каждого из них вызываем горутину Worker
+		wg.Add(1)
 		outs[i] = make(chan int64)
 		go Worker(chIn, outs[i])
 	}
@@ -52,11 +84,24 @@ func main() {
 	// chOut — канал, в который будут отправляться числа из горутин `outs[i]`
 	chOut := make(chan int64, NumOut)
 
-	var wg sync.WaitGroup
-
 	// 4. Собираем числа из каналов outs
 	// ...
+	for i := 0; i < NumOut; i++ {
+		// Собираем числа из каналов outs
+		wg.Add(1)
+		go func(in <-chan int64, i int64) {
+			for {
+				v, ok := <-in
+				if !ok {
+					wg.Done()
+					break
+				}
+				chOut <- v
+				amounts[i]++
+			}
+		}(outs[i], int64(i))
 
+	}
 	go func() {
 		// ждём завершения работы всех горутин для outs
 		wg.Wait()
@@ -68,7 +113,10 @@ func main() {
 	var sum int64   // сумма чисел результирующего канала
 
 	// 5. Читаем числа из результирующего канала
-	// ...
+	for v := range chOut {
+		sum += v
+		count++
+	}
 
 	fmt.Println("Количество чисел", inputCount, count)
 	fmt.Println("Сумма чисел", inputSum, sum)
