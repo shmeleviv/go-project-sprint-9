@@ -12,23 +12,18 @@ import (
 // отправляет их в канал ch. При этом после записи в канал для каждого числа
 // вызывается функция fn. Она служит для подсчёта количества и суммы
 // сгенерированных чисел.
-var wg sync.WaitGroup
-var mux sync.Mutex
 
 func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 	// 1. Функция Generator
 	// ...
 	var n int64
-	n = 0
+	defer close(ch)
 	for {
 		select {
 		case <-ctx.Done():
-			close(ch)
 			return
 		case ch <- n:
-			mux.Lock()
 			fn(n)
-			mux.Unlock()
 			n += 1
 
 		}
@@ -39,7 +34,6 @@ func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 // Worker читает число из канала in и пишет его в канал out.
 func Worker(in <-chan int64, out chan<- int64) {
 	// 2. Функция Worker
-	defer wg.Done()
 	for {
 		// получаем числа из канала
 		v, ok := <-in
@@ -53,6 +47,8 @@ func Worker(in <-chan int64, out chan<- int64) {
 }
 
 func main() {
+	var wg sync.WaitGroup
+	var mux sync.Mutex
 	chIn := make(chan int64)
 
 	// 3. Создание контекста
@@ -65,8 +61,10 @@ func main() {
 
 	// генерируем числа, считая параллельно их количество и сумму
 	go Generator(ctx, chIn, func(i int64) {
+		mux.Lock()
 		inputSum += i
 		inputCount++
+		mux.Unlock()
 	})
 
 	const NumOut = 10 // количество обрабатывающих горутин и каналов
@@ -74,7 +72,6 @@ func main() {
 	outs := make([]chan int64, NumOut)
 	for i := 0; i < NumOut; i++ {
 		// создаём каналы и для каждого из них вызываем горутину Worker
-		wg.Add(1)
 		outs[i] = make(chan int64)
 		go Worker(chIn, outs[i])
 	}
@@ -90,12 +87,8 @@ func main() {
 		// Собираем числа из каналов outs
 		wg.Add(1)
 		go func(in <-chan int64, i int64) {
-			for {
-				v, ok := <-in
-				if !ok {
-					wg.Done()
-					break
-				}
+			defer wg.Done()
+			for v := range in {
 				chOut <- v
 				amounts[i]++
 			}
