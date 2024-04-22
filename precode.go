@@ -43,6 +43,7 @@ func Worker(in <-chan int64, out chan<- int64) {
 		}
 		// отправляем результат в другой канал
 		out <- v
+		time.Sleep(1 * time.Millisecond)
 	}
 }
 
@@ -67,7 +68,7 @@ func main() {
 		mux.Unlock()
 	})
 
-	const NumOut = 10 // количество обрабатывающих горутин и каналов
+	const NumOut = 5 // количество обрабатывающих горутин и каналов
 	// outs — слайс каналов, куда будут записываться числа из chIn
 	outs := make([]chan int64, NumOut)
 	for i := 0; i < NumOut; i++ {
